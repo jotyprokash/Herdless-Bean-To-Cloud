@@ -1,0 +1,420 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// -----------------------------------------------------------------------------
+// USER & AUTHENTICATION
+// -----------------------------------------------------------------------------
+
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String?   @unique
+  emailVerified DateTime?
+  image         String?
+  role          Role      @default(CUSTOMER)
+  
+  // Relations
+  addresses    Address[]
+  orders       Order[]
+  subscriptions Subscription[]
+  reviews      Review[]
+  rewardWallet RewardAccount?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+enum Role {
+  CUSTOMER
+  ADMIN
+  STAFF
+}
+
+model Address {
+  id         String  @id @default(cuid())
+  userId     String
+  user       User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  street     String
+  city       String
+  area       String?
+  postalCode String?
+  phone      String
+  isDefault  Boolean @default(false)
+  
+  // Billing or Shipping
+  type       AddressType @default(SHIPPING)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+enum AddressType {
+  SHIPPING
+  BILLING
+}
+
+// -----------------------------------------------------------------------------
+// CATALOG & PRODUCTS
+// -----------------------------------------------------------------------------
+
+model ProductCategory {
+  id          String    @id @default(cuid())
+  name        String    @unique
+  slug        String    @unique
+  description String?
+  imageUrl    String?
+  
+  products    Product[]
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Product {
+  id            String          @id @default(cuid())
+  name          String
+  slug          String          @unique
+  shortDesc     String
+  description   String          @db.Text
+  categoryId    String
+  category      ProductCategory @relation(fields: [categoryId], references: [id])
+  basePrice     Float           // Stored in BDT
+  images        String[]
+  
+  // Specific attributes for coffee
+  tastingNotes  String[]
+  roastProfile  String?
+  isSubscriptionEligible Boolean @default(false)
+  
+  variants      ProductVariant[]
+  reviews       Review[]
+  orderItems    OrderItem[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model ProductVariant {
+  id          String   @id @default(cuid())
+  productId   String
+  product     Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  
+  // E.g. "250g Whole Bean", "500g Espresso Grind"
+  name        String
+  sku         String   @unique
+  priceAdj    Float    @default(0) // Adjustment from base price
+  stock       Int      @default(0)
+  
+  // Coffee specific options
+  size        String?  // 250g, 500g, 1kg
+  grind       String?  // Whole Bean, Espresso, Filter, French Press
+  
+  orderItems  OrderItem[]
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// -----------------------------------------------------------------------------
+// ORDERS & CHECKOUT
+// -----------------------------------------------------------------------------
+
+model Order {
+  id              String      @id @default(cuid())
+  orderNumber     String      @unique
+  userId          String?
+  user            User?       @relation(fields: [userId], references: [id])
+  
+  status          OrderStatus @default(PENDING)
+  paymentStatus   PaymentStatus @default(UNPAID)
+  paymentMethod   String?     // bKash, Nagad, Card, COD
+  
+  subtotal        Float
+  deliveryFee     Float       @default(0)
+  discount        Float       @default(0)
+  total           Float
+  
+  // Snapshot of addresses at order time
+  shippingAddress Json?
+  billingAddress  Json?
+  
+  promoCodeId     String?
+  promoCode       PromoCode?  @relation(fields: [promoCodeId], references: [id])
+  
+  items           OrderItem[]
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+enum OrderStatus {
+  PENDING
+  PROCESSING
+  SHIPPED
+  DELIVERED
+  CANCELLED
+}
+
+enum PaymentStatus {
+  UNPAID
+  PAID
+  REFUNDED
+  FAILED
+}
+
+model OrderItem {
+  id              String         @id @default(cuid())
+  orderId         String
+  order           Order          @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  
+  productId       String
+  product         Product        @relation(fields: [productId], references: [id])
+  variantId       String?
+  variant         ProductVariant? @relation(fields: [variantId], references: [id])
+  
+  quantity        Int
+  price           Float          // Price per unit at time of purchase
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model PromoCode {
+  id          String   @id @default(cuid())
+  code        String   @unique
+  discountPct Float?
+  discountAmt Float?
+  isActive    Boolean  @default(true)
+  expiresAt   DateTime?
+  
+  orders      Order[]
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// -----------------------------------------------------------------------------
+// SUBSCRIPTIONS
+// -----------------------------------------------------------------------------
+
+model SubscriptionPlan {
+  id          String   @id @default(cuid())
+  name        String   // "Weekly Explorer", "Monthly Staples"
+  description String
+  frequency   SubscriptionFreq
+  discountPct Float    @default(10)
+  
+  subscriptions Subscription[]
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+enum SubscriptionFreq {
+  WEEKLY
+  BIWEEKLY
+  MONTHLY
+}
+
+model Subscription {
+  id             String           @id @default(cuid())
+  userId         String
+  user           User             @relation(fields: [userId], references: [id])
+  planId         String
+  plan           SubscriptionPlan @relation(fields: [planId], references: [id])
+  
+  // Specific configs
+  coffeeType     String?
+  grindType      String?
+  bagCount       Int              @default(1)
+  
+  status         SubStatus        @default(ACTIVE)
+  nextDeliveryDt DateTime
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+enum SubStatus {
+  ACTIVE
+  PAUSED
+  CANCELLED
+}
+
+// -----------------------------------------------------------------------------
+// GIFT CARDS
+// -----------------------------------------------------------------------------
+
+model GiftCard {
+  id            String                @id @default(cuid())
+  code          String                @unique
+  initialValue  Float
+  balance       Float
+  recipientName String?
+  recipientEmail String?
+  message       String?               @db.Text
+  isActive      Boolean               @default(true)
+  
+  transactions  GiftCardTransaction[]
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model GiftCardTransaction {
+  id          String   @id @default(cuid())
+  giftCardId  String
+  giftCard    GiftCard @relation(fields: [giftCardId], references: [id])
+  amount      Float    // negative for redemption, positive for reload
+  description String?
+  
+  createdAt DateTime @default(now())
+}
+
+// -----------------------------------------------------------------------------
+// REWARDS & LOYALTY
+// -----------------------------------------------------------------------------
+
+model RewardAccount {
+  id            String              @id @default(cuid())
+  userId        String              @unique
+  user          User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  pointsBalance Int                 @default(0)
+  tier          String              @default("BRONZE") // BRONZE, SILVER, GOLD
+  
+  transactions  RewardTransaction[]
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model RewardTransaction {
+  id              String        @id @default(cuid())
+  rewardAccountId String
+  account         RewardAccount @relation(fields: [rewardAccountId], references: [id])
+  points          Int           // positive=earned, negative=redeemed
+  description     String
+  
+  createdAt DateTime @default(now())
+}
+
+// -----------------------------------------------------------------------------
+// LOCATIONS & STORES
+// -----------------------------------------------------------------------------
+
+model StoreLocation {
+  id          String   @id @default(cuid())
+  name        String
+  slug        String   @unique
+  address     String   @db.Text
+  city        String
+  phone       String?
+  mapUrl      String?
+  hours       String?
+  
+  // Services
+  hasDineIn   Boolean  @default(true)
+  hasTakeaway Boolean  @default(true)
+  hasDelivery Boolean  @default(false)
+  hasWifi     Boolean  @default(false)
+  hasParking  Boolean  @default(false)
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// -----------------------------------------------------------------------------
+// CAREERS & CONTACT
+// -----------------------------------------------------------------------------
+
+model CareerJob {
+  id            String           @id @default(cuid())
+  title         String
+  slug          String           @unique
+  department    String
+  location      String           // "Remote", "Dhaka", etc.
+  type          String           // "Full-time", "Part-time"
+  description   String           @db.Text
+  requirements  String[]
+  isActive      Boolean          @default(true)
+  
+  applications  JobApplication[]
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model JobApplication {
+  id            String    @id @default(cuid())
+  jobId         String
+  job           CareerJob @relation(fields: [jobId], references: [id])
+  
+  name          String
+  email         String
+  phone         String
+  city          String?
+  linkedin      String?
+  portfolio     String?
+  coverLetter   String?   @db.Text
+  status        AppStatus @default(PENDING)
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+enum AppStatus {
+  PENDING
+  REVIEWED
+  REJECTED
+  HIRED
+}
+
+model ContactMessage {
+  id          String   @id @default(cuid())
+  name        String
+  email       String
+  topic       String
+  message     String   @db.Text
+  isRead      Boolean  @default(false)
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model NewsletterSubscriber {
+  id          String   @id @default(cuid())
+  email       String   @unique
+  isActive    Boolean  @default(true)
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// -----------------------------------------------------------------------------
+// REVIEWS
+// -----------------------------------------------------------------------------
+
+model Review {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id])
+  productId   String
+  product     Product  @relation(fields: [productId], references: [id])
+  
+  rating      Int      // 1 to 5
+  comment     String?  @db.Text
+  isApproved  Boolean  @default(false)
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
