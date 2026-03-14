@@ -1,0 +1,32 @@
+version: '3.8'
+
+services:
+  db:
+    image: postgres:15-alpine
+    container_name: herdless_db
+    restart: always
+    environment:
+      POSTGRES_USER: herdless
+      POSTGRES_PASSWORD: herdlesspass
+      POSTGRES_DB: herdless
+    ports:
+      - '5433:5432'
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: herdless_web
+    restart: always
+    ports:
+      - '3000:3000'
+    environment:
+      - DATABASE_URL=postgresql://herdless:herdlesspass@db:5432/herdless?schema=public
+      - NEXT_PUBLIC_SITE_URL=http://localhost:3000
+    depends_on:
+      - db
+
+volumes:
+  pgdata:
