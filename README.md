@@ -2,6 +2,9 @@
 
 A production-grade, original coffee brand website and commerce platform for a Bangladesh-based brand ("Herdless Coffee BD"). Built with Next.js 14+, TypeScript, Tailwind CSS, shadcn/ui, and Prisma.
 
+## DevSecOps Architecture
+![Architecture Diagram](diagrams/architecture.png)
+
 ## Key Features
 
 - **Modern Premium UI:** Energetic, youthful, and professional design built with Tailwind and shadcn/ui.
