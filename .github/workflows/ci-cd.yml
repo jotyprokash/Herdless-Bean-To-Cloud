@@ -1,0 +1,108 @@
+name: DevSecOps Pipeline
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  security-scans:
+    runs-on: self-hosted
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Gitleaks (Secret Scanning)
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Checkov (IaC Scanning)
+        uses: bridgecrewio/checkov-action@master
+        with:
+          directory: terraform/ kubernetes/
+          framework: terraform,kubernetes
+
+  lint-and-test:
+    runs-on: self-hosted
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run ESLint
+        run: npm run lint
+
+  terraform-validate:
+    runs-on: self-hosted
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform Init (Local/Floci)
+        working-directory: ./terraform/environments/local
+        run: terraform init
+
+      - name: Terraform Validate
+        working-directory: ./terraform/environments/local
+        run: terraform validate
+
+  build-and-scan-image:
+    runs-on: self-hosted
+    needs: [security-scans, lint-and-test, terraform-validate]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: docker build -t herdless-app:latest .
+
+      - name: Trivy Vulnerability Scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: 'herdless-app:latest'
+          format: 'table'
+          exit-code: '1'
+          ignore-unfixed: true
+          vuln-type: 'os,library'
+          severity: 'CRITICAL,HIGH'
+
+      # - name: Push to ECR
+      #   run: |
+      #     aws ecr get-login-password --region ap-southeast-1 | docker login --username AWS --password-stdin <ACCOUNT_ID>.dkr.ecr.ap-southeast-1.amazonaws.com
+      #     docker tag herdless-app:latest <ACCOUNT_ID>.dkr.ecr.ap-southeast-1.amazonaws.com/herdless-app-prod:latest
+      #     docker push <ACCOUNT_ID>.dkr.ecr.ap-southeast-1.amazonaws.com/herdless-app-prod:latest
+
+  deploy-infrastructure:
+    runs-on: self-hosted
+    needs: [build-and-scan-image]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform Init (Prod)
+        working-directory: ./terraform/environments/prod
+        run: terraform init
+
+      - name: Terraform Apply
+        working-directory: ./terraform/environments/prod
+        run: terraform apply -auto-approve
